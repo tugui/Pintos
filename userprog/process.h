@@ -11,4 +11,5 @@ void free_children_list (struct list *);
 void set_return_value (struct child *, int status);
 void parent_wakeup (struct thread *parent, tid_t tid);
 
+bool install_page (void *upage, void *kpage, bool writable);
 #endif /* userprog/process.h */

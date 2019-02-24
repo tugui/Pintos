@@ -31,6 +31,7 @@ hash_init (struct hash *h,
   h->hash = hash;
   h->less = less;
   h->aux = aux;
+	lock_init (&h->lock);
 
   if (h->buckets != NULL) 
     {
@@ -98,13 +99,16 @@ hash_destroy (struct hash *h, hash_action_func *destructor)
 struct hash_elem *
 hash_insert (struct hash *h, struct hash_elem *new)
 {
+	lock_acquire (&h->lock);
   struct list *bucket = find_bucket (h, new);
   struct hash_elem *old = find_elem (h, bucket, new);
 
   if (old == NULL) 
-    insert_elem (h, bucket, new);
-
-  rehash (h);
+		{
+			insert_elem (h, bucket, new);
+			rehash (h);
+		}
+	lock_release (&h->lock);
 
   return old; 
 }
@@ -114,6 +118,7 @@ hash_insert (struct hash *h, struct hash_elem *new)
 struct hash_elem *
 hash_replace (struct hash *h, struct hash_elem *new) 
 {
+	lock_acquire (&h->lock);
   struct list *bucket = find_bucket (h, new);
   struct hash_elem *old = find_elem (h, bucket, new);
 
@@ -121,7 +126,9 @@ hash_replace (struct hash *h, struct hash_elem *new)
     remove_elem (h, old);
   insert_elem (h, bucket, new);
 
-  rehash (h);
+  if (old == NULL)
+		rehash (h);
+	lock_release (&h->lock);
 
   return old;
 }
@@ -131,7 +138,11 @@ hash_replace (struct hash *h, struct hash_elem *new)
 struct hash_elem *
 hash_find (struct hash *h, struct hash_elem *e) 
 {
-  return find_elem (h, find_bucket (h, e), e);
+	lock_acquire (&h->lock);
+  struct hash_elem *found = find_elem (h, find_bucket (h, e), e);
+	lock_release (&h->lock);
+
+  return found;
 }
 
 /* Finds, removes, and returns an element equal to E in hash
@@ -144,12 +155,15 @@ hash_find (struct hash *h, struct hash_elem *e)
 struct hash_elem *
 hash_delete (struct hash *h, struct hash_elem *e)
 {
+	lock_acquire (&h->lock);
   struct hash_elem *found = find_elem (h, find_bucket (h, e), e);
   if (found != NULL) 
     {
       remove_elem (h, found);
       rehash (h); 
     }
+	lock_release (&h->lock);
+
   return found;
 }
 
@@ -166,6 +180,7 @@ hash_apply (struct hash *h, hash_action_func *action)
   
   ASSERT (action != NULL);
 
+	lock_acquire (&h->lock);
   for (i = 0; i < h->bucket_cnt; i++) 
     {
       struct list *bucket = &h->buckets[i];
@@ -177,6 +192,7 @@ hash_apply (struct hash *h, hash_action_func *action)
           action (list_elem_to_hash_elem (elem), h->aux);
         }
     }
+	lock_release (&h->lock);
 }
 
 /* Initializes I for iterating hash table H.

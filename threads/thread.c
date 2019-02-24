@@ -147,13 +147,13 @@ thread_tick (void)
     idle_ticks++;
 #ifdef USERPROG
   else if (t->pagedir != NULL)
-			user_ticks++;
+		user_ticks++;
 #endif
   else
-			kernel_ticks++;
+		kernel_ticks++;
   
 	if (thread_mlfqs == true && t != idle_thread)
-			t->recent_cpu = add_int (t->recent_cpu, 1);
+		t->recent_cpu = add_int (t->recent_cpu, 1);
 
 	if (thread_mlfqs == true && timer_ticks () % 4 == 0)
 		{

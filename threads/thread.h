@@ -3,6 +3,7 @@
 
 #include <bitmap.h>
 #include <debug.h>
+#include <hash.h>
 #include <list.h>
 #include <stdint.h>
 #include "threads/fixed-point.h"
@@ -134,6 +135,11 @@ struct thread
 		struct files_handler *files;				/* Files handler. */
 		struct semaphore child_load;				/* Used for exec system call. */
 		struct semaphore child_wait;				/* Used for wait system call. */
+#endif
+
+#ifdef VM
+		struct hash pages;
+		struct list mmapfiles;
 #endif
 
     /* Shared between thread.c and timer.c. */

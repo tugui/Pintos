@@ -6,8 +6,11 @@
 #include "userprog/process.h"
 #include "userprog/syscall.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/frame.h"
+#include "vm/page.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -152,8 +155,47 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-	if (not_present || (user && fault_addr >= PHYS_BASE))
-		syscall_exit (-1);
+	if (!not_present || !fault_addr || !is_user_vaddr (fault_addr))
+    syscall_exit (-1);
+
+	struct thread *t = thread_current ();
+
+	/* If the page of the address is loading, obtain a frame to store the page. */
+	struct page *p = page_find (&t->pages, pg_round_down (fault_addr));
+	if (p != NULL && !p->loaded)
+		{
+			load_page (p);
+			return;
+		}
+
+	/* Allocate additional pages only if they appear to be stack accesses. */
+	int number = pg_no (PHYS_BASE) - pg_no (fault_addr);
+	if (pg_round_up (fault_addr) == pg_round_up (f->esp) && number <= STACK_SIZE)
+		{
+			void *upage = PHYS_BASE - PGSIZE;
+			void *bottom = pg_round_down (fault_addr - PGSIZE);
+			while (upage != bottom)
+				{
+					if (page_find (&t->pages, upage) != NULL)
+						{
+							upage -= PGSIZE;
+							continue;
+						}
+
+					uint8_t *kpage = frame_get (PAL_USER | PAL_ZERO);
+					if (kpage != NULL)
+						{
+							if (install_page (upage, kpage, true) && page_add_stack (upage))
+								upage -= PGSIZE;
+							else
+								/* If stack and heap collision collide, terminate the process. */
+								frame_free (kpage);
+						}
+				}
+			return;
+		}
+
+	syscall_exit (-1);
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to

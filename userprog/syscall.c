@@ -13,10 +13,12 @@
 #include "userprog/file-handle.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
+#include "vm/frame.h"
+#include "vm/page.h"
 
 static void syscall_handler (struct intr_frame *);
 static bool is_valid_uddr (const void *vaddr);
-static inline void __put_unused_fd (struct files_handler *files, int fd);
+static inline void put_unused_fd (struct files_handler *files, int fd);
 
 void
 syscall_init (void) 
@@ -39,68 +41,77 @@ syscall_handler (struct intr_frame *f)
 
 	/* Because the arguments stored in the user stack are unordered and discontinuous, so we need to specify their positions. */
 	int syscall_number = *p;
-	// printf ("No: %d\n", syscall_number);
+	// printf ("Name %s, No: %d\n", thread_name (), syscall_number);
 	switch (syscall_number)
 		{
-			case SYS_HALT: // syscall0
-				syscall_halt();
-				break;
-			case SYS_EXIT: // syscall1
-				syscall_exit (*(p + 1));
-				break;
-			case SYS_EXEC:
-				if (!is_valid_uddr ((char*) *(p + 1)))
-					syscall_exit (-1);
-				else
-					f->eax = syscall_exec ((char*) *(p + 1));
-				break;
-			case SYS_WAIT:
-				f->eax = syscall_wait (*(p + 1));
-				break;
-			case SYS_REMOVE:
-				if (!is_valid_uddr ((char*) *(p + 1)))
-					syscall_exit (-1);
-				else
-					f->eax = syscall_remove ((char *) *(p + 1));
-				break;
-			case SYS_OPEN:
-				if (!is_valid_uddr ((char*) *(p + 1)))
-					syscall_exit (-1);
-				else
-					f->eax = syscall_open ((char *) *(p + 1));
-				break;
-			case SYS_FILESIZE:
-				f->eax = syscall_filesize (*(p + 1));
-				break;
-			case SYS_TELL:
-				f->eax = syscall_tell (*(p + 1));
-				break;
-			case SYS_CLOSE:
-				syscall_close (*(p + 1));
-				break;
-			case SYS_CREATE: // syscall2
-				if (!is_valid_uddr ((char*) *(p + 4)))
-					syscall_exit (-1);
-				else
-					f->eax = syscall_create ((char *) *(p + 4), *(p + 5));
-				break;
-			case SYS_SEEK:
-				syscall_seek (*(p + 4), *(p + 5));
-				break;
-			case SYS_READ: // syscall3
-				if (!is_valid_uddr ((void *) *(p + 6)))
-					syscall_exit (-1);
-				else
+		case SYS_HALT: // syscall0
+			syscall_halt();
+			break;
+		case SYS_EXIT: // syscall1
+			syscall_exit (*(p + 1));
+			break;
+		case SYS_EXEC:
+			if (!is_valid_uddr ((char*) *(p + 1)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_exec ((char*) *(p + 1));
+			break;
+		case SYS_WAIT:
+			f->eax = syscall_wait (*(p + 1));
+			break;
+		case SYS_REMOVE:
+			if (!is_valid_uddr ((char*) *(p + 1)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_remove ((char *) *(p + 1));
+			break;
+		case SYS_OPEN:
+			if (!is_valid_uddr ((char*) *(p + 1)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_open ((char *) *(p + 1));
+			break;
+		case SYS_FILESIZE:
+			f->eax = syscall_filesize (*(p + 1));
+			break;
+		case SYS_TELL:
+			f->eax = syscall_tell (*(p + 1));
+			break;
+		case SYS_CLOSE:
+			syscall_close (*(p + 1));
+			break;
+		case SYS_CREATE: // syscall2
+			if (!is_valid_uddr ((char*) *(p + 4)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_create ((char *) *(p + 4), *(p + 5));
+			break;
+		case SYS_SEEK:
+			syscall_seek (*(p + 4), *(p + 5));
+			break;
+		case SYS_READ: // syscall3
+			if (!is_user_vaddr ((void *) *(p + 6)))
+				syscall_exit (-1);
+			else
 					f->eax = syscall_read (*(p + 2), (void *) *(p + 6), *(p + 3));
-				break;
-			case SYS_WRITE:
-				if (!is_valid_uddr ((void *) *(p + 6)))
-					syscall_exit (-1);
-				else
-					f->eax = syscall_write (*(p + 2), (void *) *(p + 6), *(p + 3));
-				break;
-			default:
-				break;
+			break;
+		case SYS_WRITE:
+			if (!is_valid_uddr ((void *) *(p + 6)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_write (*(p + 2), (void *) *(p + 6), *(p + 3));
+			break;
+		case SYS_MMAP:
+			if (!is_user_vaddr ((void *) *(p + 5)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_mmap (*(p + 4), (void *) *(p + 5));
+			break;
+		case SYS_MUNMAP:
+				syscall_munmap (*(p + 1));
+			break;
+		default:
+			break;
 		}
 }
 
@@ -114,6 +125,10 @@ void
 syscall_exit (int status)
 {
 	struct thread *cur = thread_current ();
+#ifdef VM
+	free_mmapfiles ();
+	free_pages (&cur->pages); 
+#endif
 	
 	/* If its parent is alive and is waiting for it, set the return value and wake its parent up. */
 	if (cur->self)
@@ -171,8 +186,16 @@ syscall_wait (pid_t pid)
 			struct child *s = list_entry (e, struct child, elem);
 			if (s->pid == pid && !s->waited)
 				{
-					status = process_wait (s->tid);
+					if (s->waited)
+						return -1;
+					if (!s->terminated)
+						{
+							s->be_wait = true;
+							sema_down (&cur->child_wait);
+						}
 					s->waited = true;
+					status = s->retval;
+					break;
 				}
 		}
 	return status;
@@ -293,18 +316,66 @@ syscall_close (int fd)
 	struct files_handler *files = thread_current ()->files; 
 	lock_acquire (&files->file_lock);
 	struct fdtable *fdt = files->fdt;
-	if (!fdt->fd[fd])
+	if (fdt->fd[fd] == NULL)
 		goto out_unlock;
 	file_close (fdt->fd[fd]);
-	fdt->fd[fd] = NULL; // when the content is freed, the pointer should assign to null immediately	
-	__put_unused_fd (files, fd);
+	fdt->fd[fd] = NULL;
+	put_unused_fd (files, fd);
 
 out_unlock:
 	lock_release (&files->file_lock);
 }
 
+mapid_t
+syscall_mmap (int fd, void *addr)
+{
+	if (fd == 0 || fd == 1 || addr == NULL || pg_ofs (addr) != 0)
+		return -1;
+
+	fd -= 2;
+	if (!is_open (fd))
+		return -1;
+	
+	struct thread *cur = thread_current ();
+	struct file *f = file_reopen (cur->files->fdt->fd[fd]);
+	if (f == NULL)
+		return -1;
+
+	off_t read_bytes = file_length (f);
+	if (read_bytes == 0)
+		return -1;
+
+  off_t offset = 0;
+  while (offset < read_bytes)
+    {
+      if (page_find (&cur->pages, addr + offset) != NULL)
+				return -1;
+      offset += PGSIZE;
+    }	
+
+	return add_mmapfile (&cur->mmapfiles, f, addr, read_bytes);
+}
+
+void
+syscall_munmap (mapid_t mapping)
+{
+	struct list_elem *e;
+	struct thread *cur = thread_current ();
+  for (e = list_begin (&cur->mmapfiles); e != list_end (&cur->mmapfiles); e = list_next (e))
+		{
+      struct mmapfile *mf = list_entry (e, struct mmapfile, elem);
+			if (mf->mapid == mapping)
+				{
+					free_mmapfile (&cur->pages, mf);
+					list_remove (e);
+					free (mf);
+					break;
+				}
+		}
+}
+
 static inline void
-__put_unused_fd (struct files_handler *files, int fd)
+put_unused_fd (struct files_handler *files, int fd)
 {
 	bitmap_set (files->fdt->fd_map, fd, false);
 	if (fd < files->next_fd)

@@ -1,10 +1,12 @@
 #include "userprog/pagedir.h"
+#include <hash.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 #include "threads/init.h"
 #include "threads/pte.h"
 #include "threads/palloc.h"
+#include "vm/frame.h"
 
 static uint32_t *active_pd (void);
 static void invalidate_pagedir (uint32_t *);
@@ -41,7 +43,7 @@ pagedir_destroy (uint32_t *pd)
         
         for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++)
           if (*pte & PTE_P) 
-            palloc_free_page (pte_get_page (*pte));
+						frame_free (pte_get_page (*pte));
         palloc_free_page (pt);
       }
   palloc_free_page (pd);
@@ -112,6 +114,14 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
     {
       ASSERT ((*pte & PTE_P) == 0);
       *pte = pte_create_user (kpage, writable);
+
+			/* Add the pte into the frame table entry. */
+			extern struct hash frames;
+			struct frame *f = frame_find (&frames, kpage);
+			if (f)
+				f->upage = upage;
+			else
+				return false;
       return true;
     }
   else

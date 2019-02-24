@@ -4,6 +4,7 @@
 #include <debug.h>
 #include "filesys/off_t.h"
 #include "threads/thread.h"
+#include "userprog/mmap.h"
 
 #define OUTPUT_MAX 128
 
@@ -21,5 +22,7 @@ int syscall_write (int fd, const void *buffer, off_t);
 void syscall_seek (int fd, off_t);
 off_t syscall_tell (int fd);
 void syscall_close (int fd);
+mapid_t syscall_mmap (int fd, void *addr);
+void syscall_munmap (mapid_t mapping);
 
 #endif /* userprog/syscall.h */

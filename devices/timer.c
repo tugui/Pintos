@@ -98,9 +98,6 @@ timer_sleep (int64_t ticks)
 
 	enum intr_level old_level; 
 
-	/* Debug. */
-	// printf ("step 0:ticks %"PRId64",tid %d,status %d\n",ticks,thread_current ()->tid,thread_current ()->status);
-
   /* Register in the timer_list. */
   ASSERT (intr_get_level () == INTR_ON);
 
@@ -113,7 +110,6 @@ timer_sleep (int64_t ticks)
 					struct thread *t = list_entry (e, struct thread, timerelem);
 					if (ticks < t->jet_lag)
 						{
-							// set jet_lag and insert after it
 							old_level = intr_disable ();
 							t->jet_lag -= ticks;	 
 							thread_current ()->jet_lag = ticks;	 
@@ -122,7 +118,6 @@ timer_sleep (int64_t ticks)
 						} 
 					else if (ticks == t->jet_lag)
 						{
-							// set jet_lag and insert after it
 							old_level = intr_disable ();
 							thread_current ()->jet_lag = 0;	 
 							list_insert (list_next(e), &thread_current ()->timerelem);
@@ -130,7 +125,6 @@ timer_sleep (int64_t ticks)
 						}
 					else if (e->next == list_end(&timer_list))
 						{
-							// set jet_lag and insert at the end of the list
 							old_level = intr_disable ();
 							ticks -= t->jet_lag;
 							thread_current ()->jet_lag = ticks;
@@ -138,10 +132,7 @@ timer_sleep (int64_t ticks)
 							break;
 						}
 					else 
-						{
-							// for next round
-							ticks -= t->jet_lag;
-						}
+						ticks -= t->jet_lag;
 				}
 		}
 	else 
@@ -150,24 +141,6 @@ timer_sleep (int64_t ticks)
 			thread_current ()->jet_lag = ticks;
 			list_push_back (&timer_list, &thread_current ()->timerelem);
 		}
-
-	/* Debug. */
-	// printf ("step 1:jet_lag %lld,tid %d,i %d\n",thread_current ()->jet_lag,thread_current ()->tid,i);
-
-	/*
-	printf ("Thread_timer_list:");
-  for (e = list_begin (&timer_list); e != list_end (&timer_list);
-			 e = list_next (e))
-	  {
-      struct thread *t = list_entry (e, struct thread, timerelem);
-			if (list_entry (e->next,struct thread,timerelem)->tid == 0)
-			  {
-			    printf ("(%d,%lld)\n",t->tid,t->jet_lag);
-			  } else {
-			    printf ("(%d,%lld)->",t->tid,t->jet_lag);
-			  }
-	  }
-	*/
 
   /* Just sleep and wait someone to wake it up */
 	thread_block ();

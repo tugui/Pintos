@@ -1,13 +1,12 @@
+#include "userprog/file-handle.h"
 #include <bitmap.h> 
 #include <errno.h>
 #include <log2.h>
-#include <stdio.h>
 #include <string.h>
 #include "filesys/file.h"
 #include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
-#include "userprog/file-handle.h"
 
 static int expand_fdtable (struct files_handler *files, unsigned int size);
 static struct fdtable * allocate_fdtable (unsigned int size);
@@ -200,7 +199,7 @@ close_files (struct files_handler *files)
 								{
 									file_close (file);
 									fdt->fd[i] = NULL;
-									// thread_yield (); // yield the CPU because this function may take time
+									thread_yield (); // this function may take time
 								}
 						}
 					i++;

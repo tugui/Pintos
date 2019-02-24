@@ -8,6 +8,7 @@
 #include <string.h>
 #include "userprog/file-handle.h"
 #include "userprog/gdt.h"
+#include "userprog/mmap.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 #include "filesys/directory.h"
@@ -21,9 +22,11 @@
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/frame.h"
+#include "vm/page.h"
 
 /* Lock used by allocate_pid(). */
-extern struct lock pid_lock; // this global variable is defined in thread.c
+extern struct lock pid_lock;
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *arguments, void (**eip) (void), void **esp);
@@ -61,7 +64,7 @@ process_execute (const char *cmdline)
 				{
 					/* calloc() sets all bits to zero so we don't need to assign values to each member when their default is false, zero or null. */
 					s->tid = tid;
-					s->retval = -1; // default value
+					s->retval = -1;
 					list_push_back (&cur->children_list, &s->elem);
 				}
 			else
@@ -83,6 +86,11 @@ start_process (void *arguments_)
   bool success;
 	struct thread *cur = thread_current ();
 
+#ifdef VM
+	hash_init (&cur->pages, page_hash, page_less, NULL);
+	list_init (&cur->mmapfiles);
+#endif
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -98,7 +106,7 @@ start_process (void *arguments_)
 			if (cur->parent)
 				parent_wakeup (cur->parent, cur->tid);
 
-			palloc_free_page (pg_round_down(arguments));
+			palloc_free_page (pg_round_down (arguments));
 			thread_exit ();
 		}
 	else
@@ -109,7 +117,7 @@ start_process (void *arguments_)
 				{
 					if (cur->parent)
 						parent_wakeup (cur->parent, cur->tid);
-					palloc_free_page (pg_round_down(arguments));
+					palloc_free_page (pg_round_down (arguments));
 					thread_exit ();
 				}
 
@@ -183,7 +191,7 @@ int
 process_wait (tid_t child_tid) 
 {
 	if (child_tid == TID_ERROR)
-		goto out;
+		return -1;
 
   struct list_elem *e;
   struct thread *cur = thread_current ();
@@ -193,19 +201,18 @@ process_wait (tid_t child_tid)
 			struct child *s = list_entry (e, struct child, elem);
 			if (s->tid == child_tid)
 				{
-					if (s->waited) // has been called
-						goto out;
+					if (s->waited)
+						return -1;
 					if (!s->terminated)
 						{
 							s->be_wait = true;
 							sema_down (&cur->child_wait);
 							s->waited = true;
 						}
-					return s->retval; // if child was killed, return value is still valid
+					/* If the child was killed, its return value is still valid. */
+					return s->retval;
 				}
 		}
-
-out:
 	return -1;
 }
 
@@ -443,10 +450,6 @@ load (const char *arguments, void (**eip) (void), void **esp)
   return success;
 }
 
-/* load() helpers. */
-
-static bool install_page (void *upage, void *kpage, bool writable);
-
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
 static bool
@@ -514,8 +517,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  file_seek (file, ofs);
-  while (read_bytes > 0 || zero_bytes > 0) 
+	while (read_bytes > 0 || zero_bytes > 0)
     {
       /* Calculate how to fill this page.
          We will read PAGE_READ_BYTES bytes from FILE
@@ -523,29 +525,15 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
-        return false;
-
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
+      /* Add an file entry to supplemental page table */
+      if (!page_add_file (file, ofs, upage, page_read_bytes,
+           page_zero_bytes, writable))
+				return false;
 
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
+      ofs += page_read_bytes;
       upage += PGSIZE;
     }
   return true;
@@ -556,18 +544,18 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp, const char *arguments) 
 {
-  uint8_t *kpage;
   bool success = false;
-
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  uint8_t *kpage = frame_get (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
+			uint8_t *upage = PHYS_BASE - PGSIZE;
+      if (install_page (upage, kpage, true)
+		   && page_add_stack (upage))
 				{
+					success = true;
 					*esp = PHYS_BASE;
 
-					char *file_name = thread_name (); 
+					const char *file_name = thread_name (); 
 					uint8_t *cmdhead; // pointer of char
 					int arglen, total = 0;
 					int argc = 0;
@@ -647,10 +635,10 @@ setup_stack (void **esp, const char *arguments)
    otherwise, it is read-only.
    UPAGE must not already be mapped.
    KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
+   with frame_get ().
    Returns true on success, false if UPAGE is already mapped or
    if memory allocation fails. */
-static bool
+bool
 install_page (void *upage, void *kpage, bool writable)
 {
   struct thread *t = thread_current ();
