@@ -128,7 +128,7 @@ fdtable * allocate_fdtable (unsigned int size)
 	size = roundup_pow_of_two (size + 1);
 	size *= (1024 / sizeof (struct file *));
 
-	struct fdtable *fdt = malloc (sizeof (struct fdtable));
+	struct fdtable *fdt = MALLOC (1, struct fdtable);
 	if (!fdt)
 		goto out;
 	fdt->max_fds = size;

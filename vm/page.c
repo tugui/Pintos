@@ -34,7 +34,7 @@ page_delete (struct hash *h, void *upage)
 
 /* Returns a hash value for page p. */
 unsigned
-page_hash (const struct hash_elem *p_, void *aux)
+page_hash (const struct hash_elem *p_, void *aux UNUSED)
 {
   const struct page *p = hash_entry (p_, struct page, elem);
   return hash_bytes (&p->upage, sizeof p->upage);
@@ -43,7 +43,7 @@ page_hash (const struct hash_elem *p_, void *aux)
 /* Returns true if page a precedes page b. */
 bool
 page_less (const struct hash_elem *a_, const struct hash_elem *b_,
-           void *aux)
+           void *aux UNUSED)
 {
   const struct page *a = hash_entry (a_, struct page, elem);
   const struct page *b = hash_entry (b_, struct page, elem);
@@ -52,7 +52,7 @@ page_less (const struct hash_elem *a_, const struct hash_elem *b_,
 }
 
 static void
-page_free (struct hash_elem *e, void *aux)
+page_free (struct hash_elem *e, void *aux UNUSED)
 {
 	struct page *p = hash_entry (e, struct page, elem);
 	if (p->position & SWAP)
@@ -179,7 +179,7 @@ bool
 page_add_file (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
 	struct thread *t = thread_current ();
-	struct page *p = malloc (sizeof (struct page));
+	struct page *p = MALLOC (1, struct page);
 	if (p == NULL)
 		return false;
 
@@ -205,7 +205,7 @@ bool
 page_add_mapfile (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes)
 {
 	struct thread *t = thread_current ();
-	struct page *p = malloc (sizeof (struct page));
+	struct page *p = MALLOC (1, struct page);
 	if (p == NULL)
 		return false;
 
@@ -229,7 +229,7 @@ bool
 page_add_stack (uint8_t *upage)
 {
 	struct thread *t = thread_current ();
-	struct page *p = malloc (sizeof (struct page));
+	struct page *p = MALLOC (1, struct page);
 	if (p == NULL)
 		return false;
 

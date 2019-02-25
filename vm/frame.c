@@ -36,7 +36,7 @@ frame_get_multiple (enum palloc_flags flags, size_t page_cnt)
 	void *kpage = palloc_get_multiple (flags, page_cnt);
 	if (kpage != NULL && flags & PAL_USER)
 		{
-			struct frame *f = malloc (sizeof (struct frame));
+			struct frame *f = MALLOC (1, struct frame);
 			if (f != NULL)
 				{
 					f->kpage = kpage;

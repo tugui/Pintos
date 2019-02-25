@@ -127,7 +127,6 @@ syscall_exit (int status)
 	struct thread *cur = thread_current ();
 #ifdef VM
 	free_mmapfiles ();
-	free_pages (&cur->pages); 
 #endif
 	
 	/* If its parent is alive and is waiting for it, set the return value and wake its parent up. */

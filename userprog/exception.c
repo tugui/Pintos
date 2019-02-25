@@ -17,6 +17,7 @@ static long long page_fault_cnt;
 
 static void kill (struct intr_frame *);
 static void page_fault (struct intr_frame *);
+static inline void grow_stack (void *fault_addr, struct hash *pages);
 
 /* Registers handlers for interrupts that can be caused by user
    programs.
@@ -172,26 +173,7 @@ page_fault (struct intr_frame *f)
 	int number = pg_no (PHYS_BASE) - pg_no (fault_addr);
 	if (pg_round_up (fault_addr) == pg_round_up (f->esp) && number <= STACK_SIZE)
 		{
-			void *upage = PHYS_BASE - PGSIZE;
-			void *bottom = pg_round_down (fault_addr - PGSIZE);
-			while (upage != bottom)
-				{
-					if (page_find (&t->pages, upage) != NULL)
-						{
-							upage -= PGSIZE;
-							continue;
-						}
-
-					uint8_t *kpage = frame_get (PAL_USER | PAL_ZERO);
-					if (kpage != NULL)
-						{
-							if (install_page (upage, kpage, true) && page_add_stack (upage))
-								upage -= PGSIZE;
-							else
-								/* If stack and heap collision collide, terminate the process. */
-								frame_free (kpage);
-						}
-				}
+			grow_stack (fault_addr, &t->pages);
 			return;
 		}
 
@@ -208,3 +190,27 @@ page_fault (struct intr_frame *f)
   kill (f);
 }
 
+static inline void
+grow_stack (void *fault_addr, struct hash *pages)
+{
+	void *upage = PHYS_BASE - PGSIZE;
+	void *bottom = pg_round_down (fault_addr - PGSIZE);
+	while (upage != bottom)
+		{
+			if (page_find (pages, upage) != NULL)
+				{
+					upage -= PGSIZE;
+					continue;
+				}
+
+			uint8_t *kpage = frame_get (PAL_USER | PAL_ZERO);
+			if (kpage != NULL)
+				{
+					if (install_page (upage, kpage, true) && page_add_stack (upage))
+						upage -= PGSIZE;
+					else
+						/* If stack and heap collision collide, terminate the process. */
+						frame_free (kpage);
+				}
+		}
+}

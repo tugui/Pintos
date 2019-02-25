@@ -4,6 +4,8 @@
 #include <debug.h>
 #include <stddef.h>
 
+#define MALLOC(n, type) ((type *) malloc ((n) * sizeof (type)))
+
 void malloc_init (void);
 void *malloc (size_t) __attribute__ ((malloc));
 void *calloc (size_t, size_t) __attribute__ ((malloc));

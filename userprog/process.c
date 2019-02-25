@@ -112,7 +112,7 @@ start_process (void *arguments_)
 	else
 		{
 			/* Process initialization. */
-			struct files_handler *files = malloc (sizeof (struct files_handler));
+			struct files_handler *files = MALLOC (1, struct files_handler);
 			if (!files)
 				{
 					if (cur->parent)
@@ -224,6 +224,9 @@ process_exit (void)
   uint32_t *pd;
 
 	/* Release resources. */
+#ifdef VM
+	free_pages (&cur->pages); 
+#endif
 	free_children_list (&cur->children_list);	
 	free_files_handler (cur->files);
 	if (cur->exec_file)

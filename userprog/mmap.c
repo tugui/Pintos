@@ -9,7 +9,7 @@
 mapid_t
 add_mmapfile (struct list *mmapfiles, struct file *f, void *addr, off_t read_bytes)
 {
-	struct mmapfile *mf = malloc (sizeof (struct mmapfile));
+	struct mmapfile *mf = MALLOC (1, struct mmapfile);
 	if (mf == NULL)
 		return MAPID_ERROR;
 
