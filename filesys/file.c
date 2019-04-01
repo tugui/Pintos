@@ -6,14 +6,15 @@
 /* An open file. */
 struct file 
   {
-    struct inode *inode;        /* File's inode. */
-    off_t pos;                  /* Current position. */
-    bool deny_write;            /* Has file_deny_write() been called? */
+    struct inode *inode; /* File's inode. */
+    off_t pos;           /* Current position. */
+		struct inode_ra_state ra_state;
+    bool deny_write;     /* Has file_deny_write() been called? */
   };
 
-/* Opens a file for the given INODE, of which it takes ownership,
-   and returns the new file.  Returns a null pointer if an
-   allocation fails or if INODE is null. */
+/* Opens a file or a directory for the given INODE,
+	 of which it takes ownership, and returns the new corresponding pointer.
+	 Returns a null pointer if an allocation fails or if INODE is null. */
 struct file *
 file_open (struct inode *inode) 
 {
@@ -23,6 +24,7 @@ file_open (struct inode *inode)
       file->inode = inode;
       file->pos = 0;
       file->deny_write = false;
+			inode_ra_state_init (&file->ra_state);
       return file;
     }
   else
@@ -68,7 +70,7 @@ file_get_inode (struct file *file)
 off_t
 file_read (struct file *file, void *buffer, off_t size) 
 {
-  off_t bytes_read = inode_read_at (file->inode, buffer, size, file->pos);
+  off_t bytes_read = inode_read_at (file->inode, &file->ra_state, buffer, size, file->pos);
   file->pos += bytes_read;
   return bytes_read;
 }
@@ -81,7 +83,7 @@ file_read (struct file *file, void *buffer, off_t size)
 off_t
 file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
 {
-  return inode_read_at (file->inode, buffer, size, file_ofs);
+  return inode_read_at (file->inode, &file->ra_state, buffer, size, file_ofs);
 }
 
 /* Writes SIZE bytes from BUFFER into FILE,
@@ -107,8 +109,7 @@ file_write (struct file *file, const void *buffer, off_t size)
    not yet implemented.)
    The file's current position is unaffected. */
 off_t
-file_write_at (struct file *file, const void *buffer, off_t size,
-               off_t file_ofs) 
+file_write_at (struct file *file, const void *buffer, off_t size, off_t file_ofs) 
 {
   return inode_write_at (file->inode, buffer, size, file_ofs);
 }

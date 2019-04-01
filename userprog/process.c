@@ -11,6 +11,7 @@
 #include "userprog/mmap.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "filesys/cache.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -149,6 +150,11 @@ start_process (void *arguments_)
 
 			if (cur->parent)
 				{
+					if (cur->parent->current_dir != NULL)
+						cur->current_dir = dir_reopen (cur->parent->current_dir);
+					else
+						cur->current_dir = dir_open_root ();
+
 					struct list_elem *e;
 					for (e = list_begin (&cur->parent->children_list); e != list_end (&cur->parent->children_list);
 							 e = list_next (e))
@@ -231,6 +237,8 @@ process_exit (void)
 	free_files_handler (cur->files);
 	if (cur->exec_file)
 		file_close (cur->exec_file);
+
+	dir_close (cur->current_dir);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -559,7 +567,7 @@ setup_stack (void **esp, const char *arguments)
 					*esp = PHYS_BASE;
 
 					const char *file_name = thread_name (); 
-					uint8_t *cmdhead; // pointer of char
+					uint8_t *cmdhead;
 					int arglen, total = 0;
 					int argc = 0;
 					int offset = sizeof (uintptr_t);

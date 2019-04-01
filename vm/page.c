@@ -7,10 +7,10 @@
 #include "vm/frame.h"
 #include "vm/swap.h"
 
+static void page_free (struct hash_elem *e, void *aux);
 static bool load_from_file (struct page *p);
 static bool load_from_mapfile (struct page *p);
 static bool load_from_swap (struct page *p);
-static void page_free (struct hash_elem *e, void *aux);
 
 /* Returns the page containing the given virtual address,
    or a null pointer if no such page exists. */
@@ -43,7 +43,7 @@ page_hash (const struct hash_elem *p_, void *aux UNUSED)
 /* Returns true if page a precedes page b. */
 bool
 page_less (const struct hash_elem *a_, const struct hash_elem *b_,
-           void *aux UNUSED)
+    void *aux UNUSED)
 {
   const struct page *a = hash_entry (a_, struct page, elem);
   const struct page *b = hash_entry (b_, struct page, elem);
@@ -55,8 +55,8 @@ static void
 page_free (struct hash_elem *e, void *aux UNUSED)
 {
 	struct page *p = hash_entry (e, struct page, elem);
-	if (p->position & SWAP)
-		swap_free (p->swap_index);
+	if (p->position & PAGE_SWAP)
+		swap_free (p->swap_slot);
 	free (p);
 }
 
@@ -72,14 +72,14 @@ load_page (struct page *p)
 	bool success = false;
 	switch (p->position)
 		{
-		case FILE:
+		case PAGE_FILE:
 			success = load_from_file (p);
 			break;
-		case MMAPFILE:
+		case PAGE_MMAPFILE:
 			success = load_from_mapfile (p);
 			break;
-		case SWAP | FILE:
-		case SWAP | STACK:
+		case PAGE_SWAP | PAGE_FILE:
+		case PAGE_SWAP | PAGE_STACK:
 			success = load_from_swap (p);
 			break;
 		default:
@@ -153,7 +153,7 @@ load_from_swap (struct page *p)
 		return false;
 
 	/* Load this page. */
-	swap_load (kpage, p->swap_index);
+	swap_load (kpage, p->swap_slot);
 
 	/* Add the page to the process's address space. */
 	if (!install_page (p->upage, kpage, true)) 
@@ -162,21 +162,22 @@ load_from_swap (struct page *p)
 			return false; 
 		}
 
-	if (p->position == (FILE | SWAP))
+	if (p->position == (PAGE_FILE | PAGE_SWAP))
     {
-      p->position = FILE;
+      p->position = PAGE_FILE;
 			p->loaded = true;
     }
-	else if (p->position == (STACK | SWAP))
+	else if (p->position == (PAGE_STACK | PAGE_SWAP))
     {
-      p->position = STACK;
+      p->position = PAGE_STACK;
 			p->loaded = true;
     }
 	return true;
 }
 
 bool
-page_add_file (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable)
+page_add_file (struct file *file, off_t ofs, uint8_t *upage,
+		uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
 	struct thread *t = thread_current ();
 	struct page *p = MALLOC (1, struct page);
@@ -184,7 +185,7 @@ page_add_file (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes
 		return false;
 
 	p->upage = upage;
-	p->position = FILE;
+	p->position = PAGE_FILE;
 	p->source.file.handle = file;
 	p->source.file.ofs = ofs;
 	p->source.file.read_bytes = read_bytes;
@@ -210,7 +211,7 @@ page_add_mapfile (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_by
 		return false;
 
 	p->upage = upage;
-	p->position = MMAPFILE;
+	p->position = PAGE_MMAPFILE;
 	p->source.mmapfile.handle = file;
 	p->source.mmapfile.ofs = ofs;
 	p->source.mmapfile.read_bytes = read_bytes;
@@ -234,7 +235,7 @@ page_add_stack (uint8_t *upage)
 		return false;
 
 	p->upage = upage;
-	p->position = STACK;
+	p->position = PAGE_STACK;
 	p->loaded = true;
 
 	struct hash_elem *e = hash_insert (&t->pages, &p->elem);

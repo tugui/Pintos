@@ -8,7 +8,8 @@
    All IDE disks use this sector size, as do most USB and SCSI
    disks.  It's not worth it to try to cater to other sector
    sizes in Pintos (yet). */
-#define BLOCK_SECTOR_SIZE 512
+#define BLOCK_SECTOR_SIZE  512
+#define BLOCK_SECTOR_SHIFT 9	
 
 /* Index of a block device sector.
    Good enough for devices up to 2 TB. */
@@ -17,7 +18,7 @@ typedef uint32_t block_sector_t;
 /* Format specifier for printf(), e.g.:
    printf ("sector=%"PRDSNu"\n", sector); */
 #define PRDSNu PRIu32
-
+
 /* Higher-level interface for file systems, etc. */
 
 struct block;
@@ -58,7 +59,7 @@ enum block_type block_type (struct block *);
 
 /* Statistics. */
 void block_print_stats (void);
-
+
 /* Lower-level interface to block device drivers. */
 
 struct block_operations

@@ -118,8 +118,9 @@ fsutil_extract (char **argv UNUSED)
           printf ("Putting '%s' into the file system...\n", file_name);
 
           /* Create destination file. */
-          if (!filesys_create (file_name, size))
+          if (!filesys_create (file_name, size, INODE_FILE))
             PANIC ("%s: create failed", file_name);
+
           dst = filesys_open (file_name);
           if (dst == NULL)
             PANIC ("%s: open failed", file_name);
@@ -128,8 +129,8 @@ fsutil_extract (char **argv UNUSED)
           while (size > 0)
             {
               int chunk_size = (size > BLOCK_SECTOR_SIZE
-                                ? BLOCK_SECTOR_SIZE
-                                : size);
+                              ? BLOCK_SECTOR_SIZE
+                              : size);
               block_read (src, sector++, data);
               if (file_write (dst, data, chunk_size) != chunk_size)
                 PANIC ("%s: write failed with %d bytes unwritten",

@@ -3,7 +3,7 @@
 #include <errno.h>
 #include <log2.h>
 #include <string.h>
-#include "filesys/file.h"
+#include "filesys/filesys.h"
 #include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
@@ -197,9 +197,10 @@ close_files (struct files_handler *files)
 							struct file * file = fdt->fd[i];
 							if (file)
 								{
-									file_close (file);
+									filesys_close (file);
 									fdt->fd[i] = NULL;
-									thread_yield (); // this function may take time
+									/* This function may take time, so we can slow down the pace. */
+									thread_yield ();
 								}
 						}
 					i++;

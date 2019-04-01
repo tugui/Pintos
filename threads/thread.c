@@ -649,6 +649,7 @@ init_thread (struct thread *t, const char *name, int priority)
 	t->self = NULL;
 	t->files = NULL;
 	t->exec_file = NULL;
+	t->current_dir = NULL;
 	list_init (&t->children_list);
 	sema_init (&t->child_load, 0);
 	sema_init (&t->child_wait, 0);

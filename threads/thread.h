@@ -135,6 +135,7 @@ struct thread
 		struct files_handler *files;				/* Files handler. */
 		struct semaphore child_load;				/* Used for exec system call. */
 		struct semaphore child_wait;				/* Used for wait system call. */
+		struct dir *current_dir;						/* Current directory. */
 #endif
 
 #ifdef VM

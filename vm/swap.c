@@ -26,36 +26,36 @@ swap_init ()
 	lock_init (&swap_lock);
 }
 
-swap_index_t
+swap_slot_t
 swap_store (void *kpage)
 {
 	lock_acquire (&swap_lock);
-	swap_index_t swap_index = bitmap_scan_and_flip (free_map, 0, 1, false);
+	swap_slot_t swap_slot = bitmap_scan_and_flip (free_map, 0, 1, false);
 	lock_release (&swap_lock);
-	if (swap_index == BITMAP_ERROR)
-		return swap_index;
+	if (swap_slot == BITMAP_ERROR)
+		return swap_slot;
 
 	int i;
 	for (i = 0; i < SWAP_SLOT_SIZE; i++)
-		block_write (swap_device, swap_index * SWAP_SLOT_SIZE + i, kpage + i * BLOCK_SECTOR_SIZE);
-  return swap_index;
+		block_write (swap_device, swap_slot * SWAP_SLOT_SIZE + i, kpage + i * BLOCK_SECTOR_SIZE);
+  return swap_slot;
 }
 
 void
-swap_load (void *kpage, swap_index_t swap_index)
+swap_load (void *kpage, swap_slot_t swap_slot)
 {
 	int i;
 	for (i = 0; i < SWAP_SLOT_SIZE; i++)
-		block_read (swap_device, swap_index * SWAP_SLOT_SIZE + i, kpage + i * BLOCK_SECTOR_SIZE);
+		block_read (swap_device, swap_slot * SWAP_SLOT_SIZE + i, kpage + i * BLOCK_SECTOR_SIZE);
 	lock_acquire (&swap_lock);
-  bitmap_set (free_map, swap_index, false);
+  bitmap_set (free_map, swap_slot, false);
 	lock_release (&swap_lock);
 }
 
 void
-swap_free (swap_index_t swap_index)
+swap_free (swap_slot_t swap_slot)
 {
 	lock_acquire (&swap_lock);
-  bitmap_set (free_map, swap_index, false);
+  bitmap_set (free_map, swap_slot, false);
 	lock_release (&swap_lock);
 }

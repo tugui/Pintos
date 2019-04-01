@@ -116,9 +116,8 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
       *pte = pte_create_user (kpage, writable);
 
 			/* Add the pte into the frame table entry. */
-			extern struct hash frames;
-			struct frame *f = frame_find (&frames, kpage);
-			if (f)
+			struct frame *f = frame_find (kpage);
+			if (f != NULL)
 				f->upage = upage;
 			else
 				return false;

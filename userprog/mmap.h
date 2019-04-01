@@ -3,13 +3,13 @@
 #include "filesys/file.h"
 
 typedef int mapid_t;
-#define MAPID_ERROR ((mapid_t) -1)      /* Error value for mapid_t. */
+#define MAPID_ERROR ((mapid_t) -1) /* Error value for mapid_t. */
 
 struct mmapfile
 {
 	mapid_t mapid;
 	void *addr;
-	size_t size; // from bottom to up in page size
+	size_t size; /* From bottom to up in page size. */
 	struct file *file;
 	struct list_elem elem;
 };

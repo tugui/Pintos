@@ -1,19 +1,22 @@
 #include "vm/frame.h"
+#include "devices/timer.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
 #include "userprog/pagedir.h"
 #include "vm/page.h"
 #include "vm/swap.h"
 
-struct hash frames;
-struct list active_frames;
-struct list inactive_frames;
-
+static struct hash frames;
+static struct list active_frames;
+static struct list inactive_frames;
 static struct lock frame_lock;
+static unsigned int nr_active = 0;
+static unsigned int nr_inactive = 0;
 
-static struct frame *frame_delete (struct hash *h, void *kpage);
+static struct frame *frame_delete (void *kpage);
 static unsigned frame_hash (const struct hash_elem *f_, void *aux UNUSED);
 static bool frame_less (const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED);
+static inline void shrink_active_list (void);
 
 void
 frame_init ()
@@ -45,7 +48,9 @@ frame_get_multiple (enum palloc_flags flags, size_t page_cnt)
 					f->size = page_cnt;
 					hash_insert (&frames, &f->hash_elem);
 					lock_acquire (&frame_lock);
+					f->active = true;
 					list_push_back (&active_frames, &f->list_elem);
+					nr_active++;
 					lock_release (&frame_lock);
 					return f->kpage;
 				}
@@ -58,7 +63,9 @@ frame_get_multiple (enum palloc_flags flags, size_t page_cnt)
 			f->t = thread_current ();
 			f->size = 1;
 			lock_acquire (&frame_lock);
+			f->active = true;
 			list_push_back (&active_frames, &f->list_elem);
+			nr_active++;
 			lock_release (&frame_lock);
 			return f->kpage;
 		}
@@ -68,10 +75,14 @@ frame_get_multiple (enum palloc_flags flags, size_t page_cnt)
 void
 frame_free (void *kpage)
 {
-	struct frame *f = frame_delete (&frames, kpage);
+	struct frame *f = frame_delete (kpage);
 	if (f != NULL)
 		{
 			palloc_free_multiple (kpage, f->size);
+			if (f->active)
+				nr_active--;
+			else
+				nr_inactive--;
 			lock_acquire (&frame_lock);
 			list_remove (&f->list_elem);
 			lock_release (&frame_lock);
@@ -79,76 +90,23 @@ frame_free (void *kpage)
 		}
 }
 
-struct frame *
-frame_evict (void)
-{
-	struct frame *evictor = NULL;
-	lock_acquire (&frame_lock);
-	while (!list_empty (&inactive_frames))
-		{
-			struct list_elem *e = list_pop_front (&inactive_frames);
-			struct frame *f = list_entry (e, struct frame, list_elem);
-			if (pagedir_is_accessed (f->t->pagedir, f->upage))
-				list_push_back (&active_frames, e);
-			else
-				{
-					bool success = frame_save (f);
-					if (success)
-						{
-							evictor = f;
-							break;
-						}
-				}
-		}
-
-	if (evictor == NULL)
-		{
-			struct list_elem *e;
-			for (e = list_begin (&active_frames); e != list_end (&active_frames);
-					 e = list_next (e))
-				{
-					struct frame *f = list_entry (e, struct frame, list_elem);
-					bool success = frame_save (f);
-					if (success)
-						{
-							list_remove (e);
-							evictor = f;
-							break;
-						}
-				}
-		}
-
-	/* Keep the size in a certain range for better eviction candidates. */
-	int size = list_size (&inactive_frames);
-	while (size < 10)
-		{
-			struct list_elem *e = list_pop_front (&active_frames);
-			struct frame *f = list_entry (e, struct frame, list_elem);
-			pagedir_set_accessed (f->t->pagedir, f->upage, false);
-			list_push_back (&inactive_frames, e);
-			size++;
-		}
-	lock_release (&frame_lock);
-	return evictor;
-}
-
-bool
+static bool
 frame_save (struct frame *f)
 {
 	struct page *p = page_find (&f->t->pages, f->upage);
 	if (p == NULL || !p->loaded)
 		return false;
 
-	if (p->position & FILE || p->position & STACK)
+	if ((p->position & PAGE_FILE && p->source.file.writable) || p->position & PAGE_STACK)
 		{
-			swap_index_t swap_index = swap_store (f->kpage);
-			if (swap_index == BITMAP_ERROR)
+			swap_slot_t swap_slot = swap_store (f->kpage);
+			if (swap_slot == BITMAP_ERROR)
 				return false;
 
-			p->swap_index = swap_index;
-			p->position |= SWAP;
+			p->swap_slot = swap_slot;
+			p->position |= PAGE_SWAP;
 		}
-	else if (p->position & MMAPFILE
+	else if (p->position & PAGE_MMAPFILE
 		 	  && pagedir_is_dirty (f->t->pagedir, p->upage))
 		{
 			file_seek (p->source.mmapfile.handle, p->source.mmapfile.ofs);
@@ -160,21 +118,79 @@ frame_save (struct frame *f)
 	return true;
 }
 
+struct frame *
+frame_evict (void)
+{
+	struct frame *evictor = NULL;
+	lock_acquire (&frame_lock);
+	while (!list_empty (&inactive_frames))
+		{
+			nr_inactive--;
+			struct list_elem *e = list_pop_front (&inactive_frames);
+			struct frame *f = list_entry (e, struct frame, list_elem);
+			if (pagedir_is_accessed (f->t->pagedir, f->upage))
+				{
+					pagedir_set_accessed (f->t->pagedir, f->upage, false);
+					f->active = true;
+					list_push_back (&active_frames, e);
+					nr_active++;
+				}
+			else if (frame_save (f))
+				{
+					evictor = f;
+					break;
+				}
+		}
+
+	if (evictor == NULL)
+		{
+			struct list_elem *e;
+			for (e = list_begin (&active_frames); e != list_end (&active_frames);
+					 e = list_next (e))
+				{
+					struct frame *f = list_entry (e, struct frame, list_elem);
+					if (pagedir_is_accessed (f->t->pagedir, f->upage))
+						pagedir_set_accessed (f->t->pagedir, f->upage, false);
+					else if (frame_save (f))
+						{
+							nr_active--;
+							list_remove (e);
+							evictor = f;
+							break;
+						}
+				}
+		}
+
+	if (evictor == NULL)
+		{
+			nr_active--;
+			struct list_elem *e = list_pop_front (&active_frames);
+			struct frame *f = list_entry (e, struct frame, list_elem);
+			if (frame_save (f))
+				evictor = f;
+		}
+
+	shrink_active_list ();
+
+	lock_release (&frame_lock);
+	return evictor;
+}
+
 struct frame * 
-frame_find (struct hash *h, void *kpage)
+frame_find (void *kpage)
 {
 	struct frame f;
 	f.kpage = kpage;
-	struct hash_elem *e = hash_find (h, &f.hash_elem);
+	struct hash_elem *e = hash_find (&frames, &f.hash_elem);
 	return e != NULL ? hash_entry (e, struct frame, hash_elem) : NULL;
 }
 
 static struct frame * 
-frame_delete (struct hash *h, void *kpage)
+frame_delete (void *kpage)
 {
 	struct frame f;
 	f.kpage = kpage;
-	struct hash_elem *e = hash_delete (h, &f.hash_elem);
+	struct hash_elem *e = hash_delete (&frames, &f.hash_elem);
 	return e != NULL ? hash_entry (e, struct frame, hash_elem) : NULL;
 }
 
@@ -189,10 +205,26 @@ frame_hash (const struct hash_elem *f_, void *aux UNUSED)
 /* Returns true if frame a precedes frame b. */
 static bool
 frame_less (const struct hash_elem *a_, const struct hash_elem *b_,
-           void *aux UNUSED)
+    void *aux UNUSED)
 {
   const struct frame *a = hash_entry (a_, struct frame, hash_elem);
   const struct frame *b = hash_entry (b_, struct frame, hash_elem);
 
   return a->kpage < b->kpage;
+}
+
+/* Keep the size in a certain range for better eviction candidates. */
+static inline void
+shrink_active_list ()
+{
+	while (nr_inactive < 10)
+		{
+			nr_active--;
+			struct list_elem *e = list_pop_front (&active_frames);
+			struct frame *f = list_entry (e, struct frame, list_elem);
+			pagedir_set_accessed (f->t->pagedir, f->upage, false);
+			f->active = false;
+			list_push_back (&inactive_frames, e);
+			nr_inactive++;
+		}
 }

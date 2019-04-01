@@ -34,6 +34,7 @@
 #ifdef FILESYS
 #include "devices/block.h"
 #include "devices/ide.h"
+#include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
 #endif
@@ -126,6 +127,7 @@ main (void)
 
 #ifdef FILESYS
   /* Initialize file system. */
+	cache_init ();
   ide_init ();
   locate_block_devices ();
   filesys_init (format_filesys);

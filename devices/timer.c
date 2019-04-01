@@ -90,27 +90,23 @@ void
 timer_sleep (int64_t ticks) 
 {
 	if (ticks <= 0)
-	{
 		return;
-	}
 	
-  struct list_elem *e;
-
-	enum intr_level old_level; 
-
   /* Register in the timer_list. */
   ASSERT (intr_get_level () == INTR_ON);
 
+	enum intr_level old_level = intr_disable ();
+
   /* Create and insert a new thread timer. */
+  struct list_elem *e;
 	if (!list_empty (&timer_list))
 		{
 			for (e = list_begin (&timer_list); e != list_end (&timer_list);
-				  e = list_next (e))
+				   e = list_next (e))
 				{
 					struct thread *t = list_entry (e, struct thread, timerelem);
 					if (ticks < t->jet_lag)
 						{
-							old_level = intr_disable ();
 							t->jet_lag -= ticks;	 
 							thread_current ()->jet_lag = ticks;	 
 							list_insert(e, &thread_current ()->timerelem);
@@ -118,14 +114,12 @@ timer_sleep (int64_t ticks)
 						} 
 					else if (ticks == t->jet_lag)
 						{
-							old_level = intr_disable ();
 							thread_current ()->jet_lag = 0;	 
 							list_insert (list_next(e), &thread_current ()->timerelem);
 							break;
 						}
 					else if (e->next == list_end(&timer_list))
 						{
-							old_level = intr_disable ();
 							ticks -= t->jet_lag;
 							thread_current ()->jet_lag = ticks;
 							list_push_back (&timer_list,&thread_current ()->timerelem);	
@@ -137,15 +131,13 @@ timer_sleep (int64_t ticks)
 		}
 	else 
 		{
-			old_level = intr_disable ();
 			thread_current ()->jet_lag = ticks;
 			list_push_back (&timer_list, &thread_current ()->timerelem);
 		}
 
-  /* Just sleep and wait someone to wake it up */
+  /* Just sleep and wait someone to wake it up. */
 	thread_block ();
 	intr_set_level (old_level);
-	
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -217,7 +209,7 @@ timer_print_stats (void)
 {
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)

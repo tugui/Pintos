@@ -1,6 +1,7 @@
 #include "userprog/syscall.h"
 #include <console.h>
 #include <stdio.h>
+#include <string.h>
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
@@ -8,15 +9,39 @@
 #include "threads/vaddr.h"
 #include "devices/input.h"
 #include "devices/shutdown.h"
+#include "filesys/cache.h"
+#include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "userprog/file-handle.h"
+#include "userprog/mmap.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include "vm/frame.h"
 #include "vm/page.h"
 
 static void syscall_handler (struct intr_frame *);
+
+static void syscall_halt (void);
+static pid_t syscall_exec (const char *cmd_line);
+static int syscall_wait (pid_t);
+static bool syscall_create (const char *file, off_t initial_size);
+static bool syscall_remove (const char *file);
+static int syscall_open (const char *file);
+static int syscall_filesize (int fd);
+static int syscall_read (int fd, void *buffer, off_t size);
+static int syscall_write (int fd, const void *buffer, off_t);
+static void syscall_seek (int fd, off_t);
+static off_t syscall_tell (int fd);
+static void syscall_close (int fd);
+static mapid_t syscall_mmap (int fd, void *addr);
+static void syscall_munmap (mapid_t mapping);
+static bool syscall_chdir (const char *dir);
+static bool syscall_mkdir (const char *dir);
+static bool syscall_readdir (int fd, char *name);
+static bool syscall_isdir (int fd);
+static int syscall_inumber (int fd);
+
 static bool is_valid_uddr (const void *vaddr);
 static inline void put_unused_fd (struct files_handler *files, int fd);
 
@@ -110,12 +135,36 @@ syscall_handler (struct intr_frame *f)
 		case SYS_MUNMAP:
 				syscall_munmap (*(p + 1));
 			break;
+		case SYS_CHDIR:
+			if (!is_valid_uddr ((char*) *(p + 1)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_chdir ((char*) *(p + 1));
+			break;
+    case SYS_MKDIR:
+			if (!is_valid_uddr ((char*) *(p + 1)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_mkdir ((char*) *(p + 1));
+			break;
+    case SYS_READDIR:
+			if (!is_user_vaddr ((void *) *(p + 5)))
+				syscall_exit (-1);
+			else
+				f->eax = syscall_readdir (*(p + 4), (void *) *(p + 5));
+			break;
+    case SYS_ISDIR:
+			f->eax = syscall_isdir (*(p + 1));
+			break;
+    case SYS_INUMBER:
+			f->eax = syscall_inumber (*(p + 1));
+			break;
 		default:
 			break;
 		}
 }
 
-void
+static void
 syscall_halt (void)
 {
 	shutdown_power_off ();
@@ -128,6 +177,7 @@ syscall_exit (int status)
 #ifdef VM
 	free_mmapfiles ();
 #endif
+	free_cache (cur);
 	
 	/* If its parent is alive and is waiting for it, set the return value and wake its parent up. */
 	if (cur->self)
@@ -141,7 +191,7 @@ syscall_exit (int status)
 	thread_exit ();
 }
 
-pid_t
+static pid_t
 syscall_exec (const char *cmd_line)
 {
 	pid_t pid = -1;
@@ -173,7 +223,7 @@ syscall_exec (const char *cmd_line)
 	return pid;
 }
 
-int
+static int
 syscall_wait (pid_t pid)
 {
 	struct thread *cur = thread_current ();
@@ -200,34 +250,42 @@ syscall_wait (pid_t pid)
 	return status;
 }
 
-bool
+static bool
 syscall_create (const char *file, off_t initial_size)
 {
-	return filesys_create (file, initial_size);
+	if (strlen (file) == 0)
+		return false;
+	return filesys_create (file, initial_size, INODE_FILE);
 }
 
-bool
+static bool
 syscall_remove (const char *file)
 {
+	if (strlen (file) == 0)
+		return false;
 	return filesys_remove (file);
 }
 
-int
+static int
 syscall_open (const char *file)
 {
+	if (strlen (file) == 0)
+		return -1;
+
 	struct file *f = filesys_open (file);
 	if (f != NULL)
 		{
 			int fd = allocate_fd ();
 			if (fd < 0 || !fd_install (fd, f))
 				return -1;
-			return fd + 2; // start from 2 because of reserved number 0 and 1
+			/* Start from 2 because of reserved number 0 and 1. */
+			return fd + 2;
 		}
 	else
 		return -1;
 }
 
-int
+static int
 syscall_filesize (int fd)
 {
 	fd -= 2;
@@ -237,7 +295,7 @@ syscall_filesize (int fd)
 	return file_length (cur->files->fdt->fd[fd]);
 }
 
-int
+static int
 syscall_read (int fd, void *buffer, off_t size)
 {
 	if (fd == STDIN_FILENO)
@@ -262,7 +320,7 @@ syscall_read (int fd, void *buffer, off_t size)
 	return file_read (cur->files->fdt->fd[fd], buffer, size);
 }
 
-int
+static int
 syscall_write (int fd, const void *buffer, off_t size)
 {
 	if (fd == STDOUT_FILENO)
@@ -283,10 +341,12 @@ syscall_write (int fd, const void *buffer, off_t size)
 	if (!is_open (fd))
 		return -1;
 	struct thread *cur = thread_current ();
+	if (inode_is_dir (file_get_inode (cur->files->fdt->fd[fd])))
+		return -1;
 	return file_write (cur->files->fdt->fd[fd], buffer, size);
 }
 
-void
+static void
 syscall_seek (int fd, off_t position)
 {
 	fd -= 2;
@@ -296,7 +356,7 @@ syscall_seek (int fd, off_t position)
 	file_seek (cur->files->fdt->fd[fd], position);
 }
 
-off_t
+static off_t
 syscall_tell (int fd)
 {
 	fd -= 2;
@@ -306,7 +366,7 @@ syscall_tell (int fd)
 	return file_tell (cur->files->fdt->fd[fd]); 
 }
 
-void
+static void
 syscall_close (int fd)
 {
 	fd -= 2;
@@ -316,16 +376,16 @@ syscall_close (int fd)
 	lock_acquire (&files->file_lock);
 	struct fdtable *fdt = files->fdt;
 	if (fdt->fd[fd] == NULL)
-		goto out_unlock;
-	file_close (fdt->fd[fd]);
+		goto done;
+	filesys_close (fdt->fd[fd]);
 	fdt->fd[fd] = NULL;
 	put_unused_fd (files, fd);
 
-out_unlock:
+done:
 	lock_release (&files->file_lock);
 }
 
-mapid_t
+static mapid_t
 syscall_mmap (int fd, void *addr)
 {
 	if (fd == 0 || fd == 1 || addr == NULL || pg_ofs (addr) != 0)
@@ -355,7 +415,7 @@ syscall_mmap (int fd, void *addr)
 	return add_mmapfile (&cur->mmapfiles, f, addr, read_bytes);
 }
 
-void
+static void
 syscall_munmap (mapid_t mapping)
 {
 	struct list_elem *e;
@@ -373,12 +433,54 @@ syscall_munmap (mapid_t mapping)
 		}
 }
 
-static inline void
-put_unused_fd (struct files_handler *files, int fd)
+static bool
+syscall_chdir (const char *dir)
 {
-	bitmap_set (files->fdt->fd_map, fd, false);
-	if (fd < files->next_fd)
-		files->next_fd = fd;
+	return filesys_chdir (dir);
+}
+
+static bool
+syscall_mkdir (const char *dir)
+{
+	if (strlen (dir) == 0)
+		return false;
+	return filesys_create (dir, 2, INODE_DIR);
+}
+
+static bool
+syscall_readdir (int fd, char *name)
+{
+	fd -= 2;
+	if (!is_open (fd))
+		return false;
+	struct thread *cur = thread_current ();
+	if (!inode_is_dir (file_get_inode (cur->files->fdt->fd[fd])))
+		return false;
+	struct dir *dir = (struct dir *) cur->files->fdt->fd[fd];
+	if (dir_readdir (dir, name))
+		return true;
+	else
+		return false;
+}
+
+static bool
+syscall_isdir (int fd)
+{
+	fd -= 2;
+	if (!is_open (fd))
+		return false;
+	struct thread *cur = thread_current ();
+	return inode_is_dir (file_get_inode (cur->files->fdt->fd[fd]));
+}
+
+static int
+syscall_inumber (int fd)
+{
+	fd -= 2;
+	if (!is_open (fd))
+		return -1;
+	struct thread *cur = thread_current ();
+	return inode_get_inumber (file_get_inode (cur->files->fdt->fd[fd]));
 }
 
 static bool
@@ -388,4 +490,12 @@ is_valid_uddr (const void *vaddr)
 	if (is_user_vaddr (vaddr))
 		return pagedir_get_page (pd, vaddr) != NULL;
 	return false;
+}
+
+static inline void
+put_unused_fd (struct files_handler *files, int fd)
+{
+	bitmap_set (files->fdt->fd_map, fd, false);
+	if (fd < files->next_fd)
+		files->next_fd = fd;
 }

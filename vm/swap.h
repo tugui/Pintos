@@ -3,11 +3,11 @@
 
 #include <stdint.h>
 
-typedef uint32_t swap_index_t;
+typedef uint32_t swap_slot_t;
 
 void swap_init (void);
-swap_index_t swap_store (void *kpage);
-void swap_load (void *kpage, swap_index_t swap_index);
-void swap_free (swap_index_t swap_index);
+swap_slot_t swap_store (void *kpage);
+void swap_load (void *kpage, swap_slot_t swap_slot);
+void swap_free (swap_slot_t swap_slot);
 
-#endif
+#endif /* vm/swap.h */
